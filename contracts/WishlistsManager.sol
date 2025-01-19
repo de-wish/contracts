@@ -5,8 +5,9 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import {PRECISION, PERCENTAGE_100} from "@solarity/solidity-lib/utils/Globals.sol";
+import {PERCENTAGE_100} from "@solarity/solidity-lib/utils/Globals.sol";
 
 import {IWishlistManager} from "./interfaces/IWishlistManager.sol";
 
@@ -14,14 +15,13 @@ contract WishlistManager is IWishlistManager, Ownable {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.UintSet;
 
-    uint256 public constant MAX_PROTOCOL_FEE = 5 * PRECISION;
-
     IERC20 public immutable usdcToken;
+    uint256 public immutable maxProtocolFeeAmount;
 
     uint256 public nextWishlistId;
 
-    uint256 public protocolFee;
-    address public protocolFeeRecipient;
+    uint256 public protocolFeePercentage;
+    uint256 public owedProtocolFee;
 
     mapping(uint256 => WishlistData) internal _wishlistsData;
     mapping(address => EnumerableSet.UintSet) internal _userWishlists;
@@ -34,21 +34,33 @@ contract WishlistManager is IWishlistManager, Ownable {
     constructor(
         address ownerAddr_,
         address usdcTokenAddr_,
-        uint256 protocolFee_
+        uint256 protocolFeePercentage_,
+        uint256 maxProtocolFeeAmount_
     ) Ownable(ownerAddr_) {
         usdcToken = IERC20(usdcTokenAddr_);
 
-        _setProtocolFee(protocolFee_);
+        _setProtocolFeePercentage(protocolFeePercentage_);
+        maxProtocolFeeAmount = maxProtocolFeeAmount_;
 
         nextWishlistId = 1;
     }
 
-    function setProtocolFee(uint256 newProtocolFee_) external onlyOwner {
-        _setProtocolFee(newProtocolFee_);
+    function setProtocolFeePercentage(uint256 newFeePercentage_) external onlyOwner {
+        _setProtocolFeePercentage(newFeePercentage_);
     }
 
-    function setProtocolFeeRecipient(address newProtocolFeeRecipient_) external onlyOwner {
-        _setProtocolFeeRecipient(newProtocolFeeRecipient_);
+    function withdrawProtocolFee(address feeRecipient_) external onlyOwner {
+        require(feeRecipient_ != address(0), ZeroFeeRecipient());
+
+        uint256 feeToWithdraw_ = owedProtocolFee;
+
+        require(feeToWithdraw_ > 0, ZeroFeeToWithdraw());
+
+        delete owedProtocolFee;
+
+        usdcToken.safeTransfer(feeRecipient_, feeToWithdraw_);
+
+        emit ProtocolFeeWithdrawn(feeToWithdraw_, feeRecipient_);
     }
 
     function createWishlist(uint256[] calldata itemPrices_) external {
@@ -63,6 +75,8 @@ contract WishlistManager is IWishlistManager, Ownable {
         }
 
         _userWishlists[msg.sender].add(newWishlistId_);
+
+        emit WishlistCreated(msg.sender, newWishlistId_);
     }
 
     function addWishlistItems(
@@ -107,15 +121,21 @@ contract WishlistManager is IWishlistManager, Ownable {
         _checkActiveItem(wishlistId_, itemId_);
 
         uint256 itemPrice_ = _wishlistData.itemsData[itemId_].itemPrice;
+        uint256 protocolFee_ = _countFeeAmount(itemPrice_);
 
-        usdcToken.safeTransferFrom(msg.sender, protocolFeeRecipient, _countFeeAmount(itemPrice_));
-        usdcToken.safeTransferFrom(msg.sender, address(this), itemPrice_);
+        usdcToken.safeTransferFrom(msg.sender, address(this), itemPrice_ + protocolFee_);
+
+        owedProtocolFee += protocolFee_;
 
         _wishlistData.owedUsdcAmount += itemPrice_;
         _wishlistData.activeItemIds.remove(itemId_);
         _wishlistData.itemsData[itemId_].buyerAddr = msg.sender;
 
-        emit ItemBought(wishlistId_, itemId_, itemPrice_, msg.sender);
+        emit ItemBought(wishlistId_, itemId_, itemPrice_, protocolFee_, msg.sender);
+    }
+
+    function getUserWishlistIds(address userAddr_) external view returns (uint256[] memory) {
+        return _userWishlists[userAddr_].values();
     }
 
     function getWishlistInfo(uint256 wishlistId_) external view returns (WishlistInfo memory) {
@@ -156,24 +176,14 @@ contract WishlistManager is IWishlistManager, Ownable {
         return _wishlistsData[wishlistId_].activeItemIds.contains(itemId_);
     }
 
-    function _setProtocolFee(uint256 newProtocolFee_) internal {
-        require(newProtocolFee_ <= MAX_PROTOCOL_FEE, InvalidProtocolFee(newProtocolFee_));
+    function _setProtocolFeePercentage(uint256 newFeePercentage_) internal {
+        require(newFeePercentage_ <= PERCENTAGE_100, InvalidProtocolFee(newFeePercentage_));
 
-        uint256 currentProtocolFee_ = protocolFee;
+        uint256 currentFeePercentage_ = protocolFeePercentage;
 
-        protocolFee = newProtocolFee_;
+        protocolFeePercentage = newFeePercentage_;
 
-        emit ProtocolFeeUpdated(newProtocolFee_, currentProtocolFee_);
-    }
-
-    function _setProtocolFeeRecipient(address newProtocolFeeRecipient_) internal {
-        require(newProtocolFeeRecipient_ != address(0), ZeroProtocolFeeRecipient());
-
-        address currentFeeRecipient_ = protocolFeeRecipient;
-
-        protocolFeeRecipient = newProtocolFeeRecipient_;
-
-        emit ProtocolFeeRecipientUpdated(newProtocolFeeRecipient_, currentFeeRecipient_);
+        emit ProtocolFeePercentageUpdated(newFeePercentage_, currentFeePercentage_);
     }
 
     function _addWishlistItems(uint256 wishlistId_, uint256[] calldata itemPrices_) internal {
@@ -233,7 +243,9 @@ contract WishlistManager is IWishlistManager, Ownable {
     }
 
     function _countFeeAmount(uint256 itemPrice_) internal view returns (uint256) {
-        return (itemPrice_ * protocolFee) / PERCENTAGE_100;
+        uint256 protocolFee_ = (itemPrice_ * protocolFeePercentage) / PERCENTAGE_100;
+
+        return Math.min(protocolFee_, maxProtocolFeeAmount);
     }
 
     function _onlyWishlistOwner(uint256 wishlistId_) internal view {
