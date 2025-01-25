@@ -1,9 +1,14 @@
 import { ethers } from "hardhat";
-import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+import { BigNumberish } from "ethers";
 import { expect } from "chai";
-import { Reverter } from "@test-helpers";
-import { PRECISION, wei } from "@scripts";
-import { WishlistFactory, Wishlist, ERC20Mock } from "@ethers-v6";
+
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+
+import { PERCENTAGE_100, PRECISION, wei } from "@scripts";
+import { getCreateWishlistSignature, getItemPricesHash, Reverter } from "@test-helpers";
+
+import { WishlistFactory, Wishlist, ERC20Mock, IWishlist } from "@ethers-v6";
 
 describe("WishlistFactory", () => {
   const reverter = new Reverter();
@@ -23,6 +28,25 @@ describe("WishlistFactory", () => {
   let wishlistFactoryImpl: WishlistFactory;
 
   let wishlistFactory: WishlistFactory;
+
+  function countFee(itemPrice: BigNumberish) {
+    const protocolFee = (BigInt(itemPrice) * defaultProtocolFeePercentage) / PERCENTAGE_100;
+
+    return protocolFee > maxProtocolFeeAmount ? maxProtocolFeeAmount : protocolFee;
+  }
+
+  function checkItemInfo(
+    itemInfo: IWishlist.WishlistItemInfoStruct,
+    expectedItemId: BigNumberish,
+    expectedPrice: BigNumberish,
+    expectedBuyerAddr: BigNumberish = ethers.ZeroAddress,
+  ) {
+    expect(itemInfo.itemId).to.be.eq(expectedItemId);
+    expect(itemInfo.itemPrice).to.be.eq(expectedPrice);
+    expect(itemInfo.itemBuyingFeeAmount).to.be.eq(countFee(expectedPrice));
+    expect(itemInfo.buyerAddr).to.be.eq(expectedBuyerAddr);
+    expect(itemInfo.isActive).to.be.eq(expectedBuyerAddr === ethers.ZeroAddress);
+  }
 
   before(async () => {
     [OWNER, FIRST, SECOND, FEE_RECIPIENT] = await ethers.getSigners();
@@ -94,15 +118,27 @@ describe("WishlistFactory", () => {
 
   describe("upgradeWishlistsImpl", () => {
     it("should correctly upgrade wishlists implementation", async () => {
-      const wishlistAddr = await wishlistFactory.createWishlist.staticCall([]);
+      const wishlistId = 123;
+      const sigDeadline = (await time.latest()) + 1000;
 
-      await wishlistFactory.createWishlist([]);
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash([]),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      await wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, [], signature);
+
+      const newWishlistAddr = await wishlistFactory.getWishlistAddress(wishlistId);
 
       const WishlistMockFactory = await ethers.getContractFactory("WishlistMock");
 
       const wishlistMockImpl = await WishlistMockFactory.deploy();
 
-      const newWishlist = await ethers.getContractAt("WishlistMock", wishlistAddr);
+      const newWishlist = await ethers.getContractAt("WishlistMock", newWishlistAddr);
 
       await expect(newWishlist.version()).to.be.revertedWithoutReason();
 
@@ -150,6 +186,107 @@ describe("WishlistFactory", () => {
     });
   });
 
+  describe("createWishlist", () => {
+    it("should correctly create wishlist", async () => {
+      const wishlistId = 123;
+      const itemPrices = [wei(100, 6), wei(120, 6)];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      const tx = await wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, itemPrices, signature);
+
+      const newWishlistAddr = await wishlistFactory.getWishlistAddress(wishlistId);
+
+      await expect(tx).to.emit(wishlistFactory, "NewWishlistCreated").withArgs(FIRST, wishlistId, newWishlistAddr);
+
+      const newWishlist = await ethers.getContractAt("Wishlist", newWishlistAddr);
+
+      expect(await newWishlist.wishlistId()).to.be.eq(wishlistId);
+      expect(await newWishlist.wishlistOwner()).to.be.eq(FIRST);
+      expect(await wishlistFactory.wishlistExists(wishlistId)).to.be.true;
+      expect(await wishlistFactory.getWishlistsTotalCount()).to.be.eq(1);
+
+      const info = await newWishlist.getWishlistInfo();
+
+      info.activeItemsInfo.forEach((itemInfo, index) => {
+        checkItemInfo(itemInfo, index, itemPrices[index]);
+      });
+    });
+
+    it("should get exception if signature expired", async () => {
+      const wishlistId = 123;
+      const itemPrices = [wei(100, 6), wei(120, 6)];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      await time.setNextBlockTimestamp(sigDeadline + 10);
+
+      await expect(
+        wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, itemPrices, signature),
+      ).to.be.revertedWithCustomError(wishlistFactory, "CreateWishlistSignatureExpired");
+    });
+
+    it("should get exception if wishlist with the same ID already exists", async () => {
+      const wishlistId = 123;
+      const itemPrices = [wei(100, 6), wei(120, 6)];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      await wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, itemPrices, signature);
+
+      await expect(
+        wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, itemPrices, signature),
+      ).to.be.revertedWithCustomError(wishlistFactory, "WishlistAlreadyExists");
+    });
+
+    it("should get exception if pass invalid signature", async () => {
+      const wishlistId = 123;
+      const itemPrices = [wei(100, 6), wei(120, 6)];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      await expect(
+        wishlistFactory.connect(FIRST).createWishlist(12, sigDeadline, itemPrices, signature),
+      ).to.be.revertedWithCustomError(wishlistFactory, "InvalidCreateWishlistSignature");
+    });
+  });
+
   describe("withdrawProtocolFee", () => {
     const feeAmount = wei(100, 6);
 
@@ -184,6 +321,39 @@ describe("WishlistFactory", () => {
       await expect(wishlistFactory.connect(FIRST).withdrawProtocolFee(FIRST)).to.revertedWith(
         "Ownable: caller is not the owner",
       );
+    });
+  });
+
+  describe("getWishlistAddresses", () => {
+    it("should return correct wishlist addresses", async () => {
+      const wishlistIds = [123, 124, 125];
+      const signers = [OWNER, FIRST, SECOND];
+      const txs = [];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      for (let i = 0; i < wishlistIds.length; i++) {
+        const signature = await getCreateWishlistSignature(
+          signers[i],
+          await signers[i].getAddress(),
+          wishlistIds[i],
+          getItemPricesHash([]),
+          sigDeadline,
+          await wishlistFactory.getAddress(),
+        );
+
+        txs.push(await wishlistFactory.connect(signers[i]).createWishlist(wishlistIds[i], sigDeadline, [], signature));
+      }
+
+      expect(await wishlistFactory.getWishlistsTotalCount()).to.be.eq(wishlistIds.length);
+
+      const wishlistAddresses = await wishlistFactory.getWishlistAddresses(0, 10);
+
+      for (let i = 0; i < wishlistIds.length; i++) {
+        await expect(txs[i])
+          .to.emit(wishlistFactory, "NewWishlistCreated")
+          .withArgs(await signers[i].getAddress(), wishlistIds[i], wishlistAddresses[i]);
+      }
     });
   });
 });
