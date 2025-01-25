@@ -1,17 +1,24 @@
 import { ethers } from "hardhat";
-import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import { expect } from "chai";
-import { Reverter } from "@test-helpers";
-import { PERCENTAGE_100, PRECISION, wei } from "@scripts";
-import { WishlistFactory, Wishlist, ERC20Mock, IWishlist } from "@ethers-v6";
 import { BigNumberish } from "ethers";
+import { expect } from "chai";
+
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
+
+import { PERCENTAGE_100, PRECISION, wei } from "@scripts";
+import { getCreateWishlistSignature, getItemPricesHash, Reverter } from "@test-helpers";
+
+import { WishlistFactory, Wishlist, ERC20Mock, IWishlist } from "@ethers-v6";
 
 describe("Wishlist", () => {
   const reverter = new Reverter();
 
+  const wishlistId = 123;
   const initialTokensAmount = wei(10000);
   const defaultProtocolFeePercentage = 2n * PRECISION;
   const maxProtocolFeeAmount = wei(100, 6);
+
+  let sigDeadline: number;
 
   let OWNER: SignerWithAddress;
   let FIRST: SignerWithAddress;
@@ -67,10 +74,20 @@ describe("Wishlist", () => {
 
     await wishlistFactory.initialize(wishlistImpl, usdcToken, defaultProtocolFeePercentage, maxProtocolFeeAmount);
 
-    const newWishlistAddr = await wishlistFactory.createWishlist.staticCall([]);
-    await wishlistFactory.connect(FIRST).createWishlist([]);
+    sigDeadline = (await time.latest()) + 1000;
 
-    wishlist = await ethers.getContractAt("Wishlist", newWishlistAddr);
+    const signature = await getCreateWishlistSignature(
+      FIRST,
+      await FIRST.getAddress(),
+      wishlistId,
+      getItemPricesHash([]),
+      sigDeadline,
+      await wishlistFactory.getAddress(),
+    );
+
+    await wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, [], signature);
+
+    wishlist = await ethers.getContractAt("Wishlist", await wishlistFactory.getWishlistAddress(wishlistId));
 
     await usdcToken.approve(wishlist, initialTokensAmount);
     await usdcToken.connect(FIRST).approve(wishlist, initialTokensAmount);
@@ -93,12 +110,21 @@ describe("Wishlist", () => {
     });
 
     it("should correctly init wishlist with initial items", async () => {
+      const newWishlistId = 321;
       const itemPrices = [wei(100, 6), wei(50, 6)];
 
-      const newWishlistAddr = await wishlistFactory.createWishlist.staticCall(itemPrices);
-      await wishlistFactory.connect(FIRST).createWishlist(itemPrices);
+      const signature = await getCreateWishlistSignature(
+        FIRST,
+        await FIRST.getAddress(),
+        newWishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
 
-      const newWishlist = await ethers.getContractAt("Wishlist", newWishlistAddr);
+      await wishlistFactory.connect(FIRST).createWishlist(newWishlistId, sigDeadline, itemPrices, signature);
+
+      const newWishlist = await ethers.getContractAt("Wishlist", await wishlistFactory.getWishlistAddress(wishlistId));
 
       const info = await newWishlist.getWishlistInfo();
 

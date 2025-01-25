@@ -17,6 +17,9 @@ interface IWishlistFactory {
 
     error ZeroFeeRecipient();
     error ZeroFeeToWithdraw();
+    error CreateWishlistSignatureExpired();
+    error InvalidCreateWishlistSignature();
+    error WishlistAlreadyExists(uint256 wishlistId);
     error InvalidProtocolFee(uint256 protocolFee);
 
     function upgradeWishlistsImpl(address newWishlistsImpl_) external;
@@ -25,7 +28,12 @@ interface IWishlistFactory {
 
     function withdrawProtocolFee(address feeRecipient_) external;
 
-    function createWishlist(uint256[] calldata initialItemPrices_) external returns (address);
+    function createWishlist(
+        uint256 wishlistId_,
+        uint256 sigDeadline_,
+        uint256[] calldata initialItemPrices_,
+        bytes memory signature_
+    ) external returns (address);
 
     function usdcToken() external view returns (IERC20);
 
@@ -34,4 +42,17 @@ interface IWishlistFactory {
     function maxProtocolFeeAmount() external view returns (uint256);
 
     function protocolFeePercentage() external view returns (uint256);
+
+    function getWishlistsTotalCount() external view returns (uint256);
+
+    function getWishlistAddress(uint256 wishlistId_) external view returns (address);
+
+    function getWishlistAddresses(
+        uint256 from_,
+        uint256 to_
+    ) external view returns (address[] memory wishlistAddresses_);
+
+    function getCurrentProtocolFeeAmount() external view returns (uint256);
+
+    function wishlistExists(uint256 wishlistId_) external view returns (bool);
 }
