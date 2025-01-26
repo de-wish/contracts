@@ -13,9 +13,14 @@ interface IWishlistFactory {
         uint256 newProtocolFeePercentage,
         uint256 oldProtocolFeePercentage
     );
+    event MaxProtocolFeeAmountUpdated(
+        uint256 newMaxProtocolFeeAmount,
+        uint256 oldMaxProtocolFeeAmount
+    );
+    event ProtocolSignerUpdated(address newProtocolSignerAddr, address oldProtocolSignerAddr);
     event ProtocolFeeWithdrawn(uint256 feeAmount, address feeRecipient);
 
-    error ZeroFeeRecipient();
+    error ZeroAddr(string addrName);
     error ZeroFeeToWithdraw();
     error CreateWishlistSignatureExpired();
     error InvalidCreateWishlistSignature();
@@ -29,6 +34,7 @@ interface IWishlistFactory {
     function withdrawProtocolFee(address feeRecipient_) external;
 
     function createWishlist(
+        address wishlistOwner_,
         uint256 wishlistId_,
         uint256 sigDeadline_,
         uint256[] calldata initialItemPrices_,

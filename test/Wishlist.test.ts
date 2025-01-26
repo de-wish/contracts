@@ -23,6 +23,7 @@ describe("Wishlist", () => {
   let OWNER: SignerWithAddress;
   let FIRST: SignerWithAddress;
   let SECOND: SignerWithAddress;
+  let PROTOCOL_SIGNER: SignerWithAddress;
   let FEE_RECIPIENT: SignerWithAddress;
 
   let usdcToken: ERC20Mock;
@@ -43,17 +44,18 @@ describe("Wishlist", () => {
     itemInfo: IWishlist.WishlistItemInfoStruct,
     expectedItemId: BigNumberish,
     expectedPrice: BigNumberish,
-    expectedBuyerAddr: BigNumberish = ethers.ZeroAddress,
+    expectedCollectedAmount: BigNumberish = 0,
+    expectedBuyerAddresses: BigNumberish[] = [],
   ) {
     expect(itemInfo.itemId).to.be.eq(expectedItemId);
     expect(itemInfo.itemPrice).to.be.eq(expectedPrice);
-    expect(itemInfo.itemBuyingFeeAmount).to.be.eq(countFee(expectedPrice));
-    expect(itemInfo.buyerAddr).to.be.eq(expectedBuyerAddr);
-    expect(itemInfo.isActive).to.be.eq(expectedBuyerAddr === ethers.ZeroAddress);
+    expect(itemInfo.collectedTokensAmount).to.be.eq(expectedCollectedAmount);
+    expect(itemInfo.buyersAddresses).to.be.deep.eq(expectedBuyerAddresses);
+    expect(itemInfo.isActive).to.be.eq(expectedCollectedAmount !== expectedPrice);
   }
 
   before(async () => {
-    [OWNER, FIRST, SECOND, FEE_RECIPIENT] = await ethers.getSigners();
+    [OWNER, FIRST, SECOND, PROTOCOL_SIGNER, FEE_RECIPIENT] = await ethers.getSigners();
 
     const ERC1967ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
     const WishlistFactoryFactory = await ethers.getContractFactory("WishlistFactory");
@@ -72,12 +74,18 @@ describe("Wishlist", () => {
 
     wishlistFactory = await ethers.getContractAt("WishlistFactory", wishlistFactoryProxy);
 
-    await wishlistFactory.initialize(wishlistImpl, usdcToken, defaultProtocolFeePercentage, maxProtocolFeeAmount);
+    await wishlistFactory.initialize(
+      wishlistImpl,
+      usdcToken,
+      PROTOCOL_SIGNER,
+      defaultProtocolFeePercentage,
+      maxProtocolFeeAmount,
+    );
 
     sigDeadline = (await time.latest()) + 1000;
 
     const signature = await getCreateWishlistSignature(
-      FIRST,
+      PROTOCOL_SIGNER,
       await FIRST.getAddress(),
       wishlistId,
       getItemPricesHash([]),
@@ -85,7 +93,7 @@ describe("Wishlist", () => {
       await wishlistFactory.getAddress(),
     );
 
-    await wishlistFactory.connect(FIRST).createWishlist(wishlistId, sigDeadline, [], signature);
+    await wishlistFactory.connect(FIRST).createWishlist(FIRST, wishlistId, sigDeadline, [], signature);
 
     wishlist = await ethers.getContractAt("Wishlist", await wishlistFactory.getWishlistAddress(wishlistId));
 
@@ -114,7 +122,7 @@ describe("Wishlist", () => {
       const itemPrices = [wei(100, 6), wei(50, 6)];
 
       const signature = await getCreateWishlistSignature(
-        FIRST,
+        PROTOCOL_SIGNER,
         await FIRST.getAddress(),
         newWishlistId,
         getItemPricesHash(itemPrices),
@@ -122,7 +130,7 @@ describe("Wishlist", () => {
         await wishlistFactory.getAddress(),
       );
 
-      await wishlistFactory.connect(FIRST).createWishlist(newWishlistId, sigDeadline, itemPrices, signature);
+      await wishlistFactory.connect(FIRST).createWishlist(FIRST, newWishlistId, sigDeadline, itemPrices, signature);
 
       const newWishlist = await ethers.getContractAt("Wishlist", await wishlistFactory.getWishlistAddress(wishlistId));
 
@@ -190,7 +198,7 @@ describe("Wishlist", () => {
     it("should get exception if try to remove non-active item", async () => {
       const itemToRemove = 1;
 
-      await wishlist.buyWishlistItem(itemToRemove);
+      await wishlist.buyWishlistItem(itemToRemove, itemPrices[itemToRemove]);
 
       expect(await wishlist.isItemActive(itemToRemove)).to.be.false;
 
@@ -229,12 +237,13 @@ describe("Wishlist", () => {
     });
 
     it("should get exception if try to change price for non-active item", async () => {
+      const itemId = 1;
       const changeItemPriceData: IWishlist.ChangedItemPriceDataStruct = {
-        itemId: 1,
+        itemId,
         newItemPrice: wei(120, 6),
       };
 
-      await wishlist.buyWishlistItem(changeItemPriceData.itemId);
+      await wishlist.buyWishlistItem(changeItemPriceData.itemId, itemPrices[itemId]);
 
       expect(await wishlist.isItemActive(changeItemPriceData.itemId)).to.be.false;
 
@@ -263,8 +272,8 @@ describe("Wishlist", () => {
     });
 
     it("should correctly withdraw wishlist tokens", async () => {
-      await wishlist.buyWishlistItem(0);
-      await wishlist.buyWishlistItem(1);
+      await wishlist.buyWishlistItem(0, itemPrices[0]);
+      await wishlist.buyWishlistItem(1, itemPrices[1]);
 
       const expectedTokensAmount = itemPrices[0] + itemPrices[1];
 
@@ -303,14 +312,16 @@ describe("Wishlist", () => {
       await wishlist.connect(FIRST).addWishlistItems(itemPrices);
     });
 
-    it("should correctly buy item", async () => {
+    it("should correctly fully buy item", async () => {
       const itemToBuy = 1;
 
       const expectedFeeAmount = countFee(itemPrices[itemToBuy]);
 
-      const tx = await wishlist.buyWishlistItem(itemToBuy);
+      const tx = await wishlist.buyWishlistItem(itemToBuy, itemPrices[itemToBuy]);
 
-      expect(tx).to.emit(wishlist, "ItemBought").withArgs(itemToBuy, itemPrices[itemToBuy], OWNER);
+      expect(tx)
+        .to.emit(wishlist, "ItemBought")
+        .withArgs(itemToBuy, itemPrices[itemToBuy], expectedFeeAmount, OWNER, true);
 
       expect(await wishlist.isItemActive(itemToBuy)).to.be.false;
 

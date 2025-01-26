@@ -15,7 +15,7 @@ import {IWishlistFactory} from "./interfaces/IWishlistFactory.sol";
 
 contract Wishlist is IWishlist, Initializable {
     using SafeERC20 for IERC20;
-    using EnumerableSet for EnumerableSet.UintSet;
+    using EnumerableSet for *;
 
     IWishlistFactory public factory;
     IERC20 public usdcToken;
@@ -76,19 +76,30 @@ contract Wishlist is IWishlist, Initializable {
         emit WishlistFundsWithdrawn(amountToWithdraw_, fundsRecipient_);
     }
 
-    function buyWishlistItem(uint256 itemId_) external {
+    function buyWishlistItem(uint256 itemId_, uint256 amountToBuy_) external {
         _checkActiveItem(itemId_);
 
-        uint256 itemPrice_ = _itemsData[itemId_].itemPrice;
-        uint256 protocolFee_ = _countFeeAmount(itemPrice_);
+        WishlistItemData storage _itemData = _itemsData[itemId_];
 
-        usdcToken.safeTransferFrom(msg.sender, address(this), itemPrice_);
+        uint256 remainingAmount_ = _itemData.itemPrice - _itemData.collectedTokensAmount;
+
+        if (amountToBuy_ > remainingAmount_) {
+            amountToBuy_ = remainingAmount_;
+        }
+
+        uint256 protocolFee_ = _countFeeAmount(amountToBuy_);
+
+        usdcToken.safeTransferFrom(msg.sender, address(this), amountToBuy_);
         usdcToken.safeTransferFrom(msg.sender, address(factory), protocolFee_);
 
-        _activeItemIds.remove(itemId_);
-        _itemsData[itemId_].buyerAddr = msg.sender;
+        _itemData.collectedTokensAmount += remainingAmount_;
+        _itemData.buyersAddresses.add(msg.sender);
 
-        emit ItemBought(itemId_, itemPrice_, protocolFee_, msg.sender);
+        if (amountToBuy_ == remainingAmount_) {
+            _activeItemIds.remove(itemId_);
+        }
+
+        emit ItemBought(itemId_, amountToBuy_, protocolFee_, msg.sender, !isItemActive(itemId_));
     }
 
     function getWishlistInfo() external view returns (WishlistInfo memory) {
@@ -108,14 +119,14 @@ contract Wishlist is IWishlist, Initializable {
         resultArr_ = new WishlistItemInfo[](itemIds_.length);
 
         for (uint256 i = 0; i < itemIds_.length; i++) {
-            WishlistItemData memory itemData_ = _itemsData[itemIds_[i]];
+            WishlistItemData storage _itemData = _itemsData[itemIds_[i]];
 
             resultArr_[i] = WishlistItemInfo(
                 itemIds_[i],
-                itemData_.itemPrice,
-                _countFeeAmount(itemData_.itemPrice),
-                itemData_.buyerAddr,
-                itemData_.buyerAddr == address(0)
+                _itemData.itemPrice,
+                _itemData.collectedTokensAmount,
+                _itemData.buyersAddresses.values(),
+                isItemActive(itemIds_[i])
             );
         }
     }
