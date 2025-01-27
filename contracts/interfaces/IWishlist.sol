@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-
 interface IWishlist {
+    struct ContributionInfo {
+        uint256 contributionId;
+        address contributor;
+        uint256 contributionAmount;
+    }
+
     struct WishlistItemInfo {
         uint256 itemId;
         uint256 itemPrice;
         uint256 collectedTokensAmount;
-        address[] buyersAddresses;
+        uint256 totalContributionsNumber;
+        ContributionInfo[] contributionsInfo;
         bool isActive;
     }
 
@@ -20,6 +25,11 @@ interface IWishlist {
         WishlistItemInfo[] activeItemsInfo;
     }
 
+    struct ContributionData {
+        address contributor;
+        uint256 contributionAmount;
+    }
+
     struct ChangedItemPriceData {
         uint256 itemId;
         uint256 newItemPrice;
@@ -28,19 +38,20 @@ interface IWishlist {
     struct WishlistItemData {
         uint256 itemPrice;
         uint256 collectedTokensAmount;
-        EnumerableSet.AddressSet buyersAddresses;
+        uint256 totalContributionsNumber;
+        mapping(uint256 => ContributionData) contributrionsData;
     }
 
     event WishlistItemsAdded(uint256 lastItemId);
     event WishlistItemsRemoved(uint256[] removedItemIds);
     event WishlistFundsWithdrawn(uint256 withdrawAmount, address fundsRecipient);
-    event ItemBought(
-        uint256 itemId,
-        uint256 boughtAmount,
+    event FundsContributed(
+        uint256 indexed itemId,
+        uint256 contributedAmount,
         uint256 feeAmount,
-        address buyerAddr,
-        bool isItemFullyPurchased
+        address contributionAddr
     );
+    event FundsCollectionFinished(uint256 indexed itemId, uint256 totalContributionsNumber);
 
     error ZeroItemPrice();
     error ZeroItemsToAdd();
@@ -64,13 +75,17 @@ interface IWishlist {
 
     function withdrawFunds(address fundsRecipient_) external;
 
-    function buyWishlistItem(uint256 itemId_, uint256 amountToBuy_) external;
+    function contributeFunds(uint256 itemId_, uint256 amountToContribute_) external;
 
     function getWishlistInfo() external view returns (WishlistInfo memory);
 
     function getWishlistItemsInfo(
         uint256[] memory itemIds_
     ) external view returns (WishlistItemInfo[] memory);
+
+    function getContributionsInfo(
+        uint256 itemId_
+    ) external view returns (ContributionInfo[] memory);
 
     function isItemActive(uint256 itemId_) external view returns (bool);
 }

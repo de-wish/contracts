@@ -45,12 +45,22 @@ describe("Wishlist", () => {
     expectedItemId: BigNumberish,
     expectedPrice: BigNumberish,
     expectedCollectedAmount: BigNumberish = 0,
-    expectedBuyerAddresses: BigNumberish[] = [],
+    expectedContributionsInfo: IWishlist.ContributionInfoStruct[] = [],
   ) {
     expect(itemInfo.itemId).to.be.eq(expectedItemId);
     expect(itemInfo.itemPrice).to.be.eq(expectedPrice);
     expect(itemInfo.collectedTokensAmount).to.be.eq(expectedCollectedAmount);
-    expect(itemInfo.buyersAddresses).to.be.deep.eq(expectedBuyerAddresses);
+
+    expect(itemInfo.totalContributionsNumber).to.be.eq(expectedContributionsInfo.length);
+
+    for (let i = 0; i < expectedContributionsInfo.length; i++) {
+      expect(itemInfo.contributionsInfo[i].contributionId).to.be.eq(expectedContributionsInfo[i].contributionId);
+      expect(itemInfo.contributionsInfo[i].contributor).to.be.eq(expectedContributionsInfo[i].contributor);
+      expect(itemInfo.contributionsInfo[i].contributionAmount).to.be.eq(
+        expectedContributionsInfo[i].contributionAmount,
+      );
+    }
+
     expect(itemInfo.isActive).to.be.eq(expectedCollectedAmount !== expectedPrice);
   }
 
@@ -154,7 +164,9 @@ describe("Wishlist", () => {
 
       const tx = await wishlist.connect(FIRST).addWishlistItems(itemPrices);
 
-      expect(tx).to.emit(wishlist, "WishlistItemsAdded").withArgs(itemPrices.length);
+      await expect(tx)
+        .to.emit(wishlist, "WishlistItemsAdded")
+        .withArgs(itemPrices.length - 1);
 
       const info = await wishlist.getWishlistInfo();
 
@@ -190,7 +202,7 @@ describe("Wishlist", () => {
 
       const tx = await wishlist.connect(FIRST).removeWishlistItems(itemsToRemove);
 
-      expect(tx).to.emit(wishlist, "WishlistItemsRemoved").withArgs(itemsToRemove);
+      await expect(tx).to.emit(wishlist, "WishlistItemsRemoved").withArgs(itemsToRemove);
 
       expect(await wishlist.isItemActive(itemsToRemove[0])).to.be.false;
     });
@@ -198,7 +210,7 @@ describe("Wishlist", () => {
     it("should get exception if try to remove non-active item", async () => {
       const itemToRemove = 1;
 
-      await wishlist.buyWishlistItem(itemToRemove, itemPrices[itemToRemove]);
+      await wishlist.contributeFunds(itemToRemove, itemPrices[itemToRemove]);
 
       expect(await wishlist.isItemActive(itemToRemove)).to.be.false;
 
@@ -243,7 +255,7 @@ describe("Wishlist", () => {
         newItemPrice: wei(120, 6),
       };
 
-      await wishlist.buyWishlistItem(changeItemPriceData.itemId, itemPrices[itemId]);
+      await wishlist.contributeFunds(changeItemPriceData.itemId, itemPrices[itemId]);
 
       expect(await wishlist.isItemActive(changeItemPriceData.itemId)).to.be.false;
 
@@ -272,8 +284,8 @@ describe("Wishlist", () => {
     });
 
     it("should correctly withdraw wishlist tokens", async () => {
-      await wishlist.buyWishlistItem(0, itemPrices[0]);
-      await wishlist.buyWishlistItem(1, itemPrices[1]);
+      await wishlist.contributeFunds(0, itemPrices[0]);
+      await wishlist.contributeFunds(1, itemPrices[1]);
 
       const expectedTokensAmount = itemPrices[0] + itemPrices[1];
 
@@ -305,34 +317,76 @@ describe("Wishlist", () => {
     });
   });
 
-  describe("buyWishlistItem", () => {
+  describe("contributeFunds", () => {
     const itemPrices = [wei(20, 6), wei(100, 6), wei(350, 6)];
 
     beforeEach("setup", async () => {
       await wishlist.connect(FIRST).addWishlistItems(itemPrices);
     });
 
-    it("should correctly fully buy item", async () => {
-      const itemToBuy = 1;
+    it("should correctly contribute full price to the wishlist item", async () => {
+      const itemToContribute = 1;
 
-      const expectedFeeAmount = countFee(itemPrices[itemToBuy]);
+      const expectedFeeAmount = countFee(itemPrices[itemToContribute]);
 
-      const tx = await wishlist.buyWishlistItem(itemToBuy, itemPrices[itemToBuy]);
+      const tx = await wishlist.contributeFunds(itemToContribute, itemPrices[itemToContribute]);
 
-      expect(tx)
-        .to.emit(wishlist, "ItemBought")
-        .withArgs(itemToBuy, itemPrices[itemToBuy], expectedFeeAmount, OWNER, true);
+      await expect(tx)
+        .to.emit(wishlist, "FundsContributed")
+        .withArgs(itemToContribute, itemPrices[itemToContribute], expectedFeeAmount, OWNER);
+      await expect(tx).to.emit(wishlist, "FundsCollectionFinished").withArgs(itemToContribute, 1);
 
-      expect(await wishlist.isItemActive(itemToBuy)).to.be.false;
+      expect(await wishlist.isItemActive(itemToContribute)).to.be.false;
 
       const info = await wishlist.getWishlistInfo();
 
-      expect(info.owedUsdcAmount).to.be.eq(itemPrices[itemToBuy]);
+      expect(info.owedUsdcAmount).to.be.eq(itemPrices[itemToContribute]);
       expect(await usdcToken.balanceOf(wishlistFactory)).to.be.eq(expectedFeeAmount);
 
       expect(await usdcToken.balanceOf(OWNER)).to.be.eq(
-        initialTokensAmount - itemPrices[itemToBuy] - expectedFeeAmount,
+        initialTokensAmount - itemPrices[itemToContribute] - expectedFeeAmount,
       );
+    });
+
+    it("should correctly contribute funds several times", async () => {
+      const itemToContribute = 0;
+
+      const amount1ToContribute = wei(10, 6);
+      const amount2ToContribute = wei(25, 6);
+
+      const expectedAmount2ToContribute = itemPrices[itemToContribute] - amount1ToContribute;
+
+      const expectedFeeAmount1 = countFee(amount1ToContribute);
+      const expectedFeeAmount2 = countFee(expectedAmount2ToContribute);
+
+      let tx = await wishlist.contributeFunds(itemToContribute, amount1ToContribute);
+
+      await expect(tx)
+        .to.emit(wishlist, "FundsContributed")
+        .withArgs(itemToContribute, amount1ToContribute, expectedFeeAmount1, OWNER);
+      await expect(tx).to.not.emit(wishlist, "FundsCollectionFinished");
+
+      expect(await wishlist.isItemActive(itemToContribute)).to.be.true;
+
+      expect((await wishlist.getWishlistInfo()).activeItemsInfo[itemToContribute].collectedTokensAmount).to.be.eq(
+        amount1ToContribute,
+      );
+
+      tx = await wishlist.connect(FIRST).contributeFunds(itemToContribute, amount2ToContribute);
+
+      await expect(tx)
+        .to.emit(wishlist, "FundsContributed")
+        .withArgs(itemToContribute, expectedAmount2ToContribute, expectedFeeAmount2, FIRST);
+      await expect(tx).to.emit(wishlist, "FundsCollectionFinished").withArgs(itemToContribute, 2);
+
+      expect(await wishlist.isItemActive(itemToContribute)).to.be.false;
+
+      const itemInfo = (await wishlist.getWishlistItemsInfo([0]))[0];
+
+      checkItemInfo(itemInfo, itemToContribute, itemPrices[itemToContribute], itemPrices[itemToContribute], [
+        { contributionId: 0, contributor: OWNER, contributionAmount: amount1ToContribute },
+        { contributionId: 1, contributor: FIRST, contributionAmount: expectedAmount2ToContribute },
+      ]);
     });
   });
 });

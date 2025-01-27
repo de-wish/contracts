@@ -35,12 +35,20 @@ describe("WishlistFactory", () => {
     expectedItemId: BigNumberish,
     expectedPrice: BigNumberish,
     expectedCollectedAmount: BigNumberish = 0,
-    expectedBuyerAddresses: BigNumberish[] = [],
+    expectedContributionsInfo: IWishlist.ContributionInfoStruct[] = [],
   ) {
     expect(itemInfo.itemId).to.be.eq(expectedItemId);
     expect(itemInfo.itemPrice).to.be.eq(expectedPrice);
     expect(itemInfo.collectedTokensAmount).to.be.eq(expectedCollectedAmount);
-    expect(itemInfo.buyersAddresses).to.be.deep.eq(expectedBuyerAddresses);
+
+    expect(itemInfo.totalContributionsNumber).to.be.eq(expectedContributionsInfo.length);
+
+    for (let i = 0; i < expectedContributionsInfo.length; i++) {
+      expect(itemInfo.contributionsInfo[i].contributionId).to.be.eq(expectedContributionsInfo[i].contributionId);
+      expect(itemInfo.contributionsInfo[i].contributor).to.be.eq(expectedContributionsInfo[i].contributor);
+      expect(itemInfo.contributionsInfo[i].contributionId).to.be.eq(expectedContributionsInfo[i].contributionAmount);
+    }
+
     expect(itemInfo.isActive).to.be.eq(expectedCollectedAmount !== expectedPrice);
   }
 
@@ -189,6 +197,48 @@ describe("WishlistFactory", () => {
       const newProtocolFee = 3n * PRECISION;
 
       await expect(wishlistFactory.connect(FIRST).setProtocolFeePercentage(newProtocolFee)).to.revertedWith(
+        "Ownable: caller is not the owner",
+      );
+    });
+  });
+
+  describe("setMaxProtocolFeeAmount", () => {
+    it("should correctly set max protocol fee amount", async () => {
+      const newMaxProtocolFeeAmount = wei(10, 6);
+
+      const tx = await wishlistFactory.setMaxProtocolFeeAmount(newMaxProtocolFeeAmount);
+
+      expect(tx)
+        .to.emit(wishlistFactory, "MaxProtocolFeeAmountUpdated")
+        .withArgs(newMaxProtocolFeeAmount, maxProtocolFeeAmount);
+
+      expect(await wishlistFactory.maxProtocolFeeAmount()).to.be.eq(newMaxProtocolFeeAmount);
+    });
+
+    it("should get exception if non-owner try to set max protocol fee amount", async () => {
+      await expect(wishlistFactory.connect(FIRST).setMaxProtocolFeeAmount(wei(100, 6))).to.revertedWith(
+        "Ownable: caller is not the owner",
+      );
+    });
+  });
+
+  describe("setProtocolSignerAddr", () => {
+    it("should correctly set protocol signer address", async () => {
+      const tx = await wishlistFactory.setProtocolSignerAddr(FIRST);
+
+      expect(tx).to.emit(wishlistFactory, "ProtocolSignerUpdated").withArgs(FIRST, PROTOCOL_SIGNER);
+
+      expect(await wishlistFactory.protocolSignerAddr()).to.be.eq(FIRST);
+    });
+
+    it("should get exception if try to set zero address as a protocol signer address", async () => {
+      await expect(wishlistFactory.setProtocolSignerAddr(ethers.ZeroAddress))
+        .to.revertedWithCustomError(wishlistFactory, "ZeroAddr")
+        .withArgs("ProtocolSigner");
+    });
+
+    it("should get exception if non-owner try to set protocol signer address", async () => {
+      await expect(wishlistFactory.connect(FIRST).setProtocolSignerAddr(FIRST)).to.revertedWith(
         "Ownable: caller is not the owner",
       );
     });

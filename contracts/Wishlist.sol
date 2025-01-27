@@ -76,30 +76,36 @@ contract Wishlist is IWishlist, Initializable {
         emit WishlistFundsWithdrawn(amountToWithdraw_, fundsRecipient_);
     }
 
-    function buyWishlistItem(uint256 itemId_, uint256 amountToBuy_) external {
+    function contributeFunds(uint256 itemId_, uint256 amountToContribute_) external {
         _checkActiveItem(itemId_);
 
         WishlistItemData storage _itemData = _itemsData[itemId_];
 
         uint256 remainingAmount_ = _itemData.itemPrice - _itemData.collectedTokensAmount;
 
-        if (amountToBuy_ > remainingAmount_) {
-            amountToBuy_ = remainingAmount_;
+        if (amountToContribute_ > remainingAmount_) {
+            amountToContribute_ = remainingAmount_;
         }
 
-        uint256 protocolFee_ = _countFeeAmount(amountToBuy_);
+        uint256 protocolFee_ = _countFeeAmount(amountToContribute_);
 
-        usdcToken.safeTransferFrom(msg.sender, address(this), amountToBuy_);
+        usdcToken.safeTransferFrom(msg.sender, address(this), amountToContribute_);
         usdcToken.safeTransferFrom(msg.sender, address(factory), protocolFee_);
 
-        _itemData.collectedTokensAmount += remainingAmount_;
-        _itemData.buyersAddresses.add(msg.sender);
+        _itemData.collectedTokensAmount += amountToContribute_;
 
-        if (amountToBuy_ == remainingAmount_) {
+        _itemData.contributrionsData[_itemData.totalContributionsNumber++] = ContributionData(
+            msg.sender,
+            amountToContribute_
+        );
+
+        emit FundsContributed(itemId_, amountToContribute_, protocolFee_, msg.sender);
+
+        if (amountToContribute_ == remainingAmount_) {
             _activeItemIds.remove(itemId_);
-        }
 
-        emit ItemBought(itemId_, amountToBuy_, protocolFee_, msg.sender, !isItemActive(itemId_));
+            emit FundsCollectionFinished(itemId_, _itemData.totalContributionsNumber);
+        }
     }
 
     function getWishlistInfo() external view returns (WishlistInfo memory) {
@@ -125,8 +131,25 @@ contract Wishlist is IWishlist, Initializable {
                 itemIds_[i],
                 _itemData.itemPrice,
                 _itemData.collectedTokensAmount,
-                _itemData.buyersAddresses.values(),
+                _itemData.totalContributionsNumber,
+                getContributionsInfo(itemIds_[i]),
                 isItemActive(itemIds_[i])
+            );
+        }
+    }
+
+    function getContributionsInfo(
+        uint256 itemId_
+    ) public view returns (ContributionInfo[] memory resultArr_) {
+        WishlistItemData storage _itemData = _itemsData[itemId_];
+
+        resultArr_ = new ContributionInfo[](_itemData.totalContributionsNumber);
+
+        for (uint256 i = 0; i < resultArr_.length; i++) {
+            resultArr_[i] = ContributionInfo(
+                i,
+                _itemData.contributrionsData[i].contributor,
+                _itemData.contributrionsData[i].contributionAmount
             );
         }
     }
