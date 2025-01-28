@@ -41,8 +41,9 @@ contract WishlistFactory is
 
     uint256 public nextWishlistId;
 
-    uint256 public maxProtocolFeeAmount;
-    uint256 public protocolFeePercentage;
+    address public protocolSignerAddr;
+
+    ProtocolFeeSettings internal _feeSettings;
 
     EnumerableSet.UintSet internal _wishlistIds;
 
@@ -51,8 +52,8 @@ contract WishlistFactory is
     function initialize(
         address wishlistImpl_,
         address usdcTokenAddr_,
-        uint256 protocolFeePercentage_,
-        uint256 maxProtocolFeeAmount_
+        address protocolSignerAddr_,
+        ProtocolFeeSettings calldata feeSettings_
     ) external initializer {
         __Ownable_init();
         __EIP712_init("WishlistFactory", "1");
@@ -62,8 +63,8 @@ contract WishlistFactory is
 
         usdcToken = IERC20(usdcTokenAddr_);
 
-        maxProtocolFeeAmount = maxProtocolFeeAmount_;
-        _setProtocolFeePercentage(protocolFeePercentage_);
+        _setProtocolSignerAddr(protocolSignerAddr_);
+        _setProtocolFeeSettings(feeSettings_);
 
         nextWishlistId = 1;
     }
@@ -72,23 +73,16 @@ contract WishlistFactory is
         proxyBeacon.upgradeTo(newWishlistsImpl_);
     }
 
-    function setProtocolFeePercentage(uint256 newFeePercentage_) external onlyOwner {
-        _setProtocolFeePercentage(newFeePercentage_);
+    function setProtocolSignerAddr(address newProtocolSignerAddr_) external onlyOwner {
+        _setProtocolSignerAddr(newProtocolSignerAddr_);
     }
 
-    function withdrawProtocolFee(address feeRecipient_) external onlyOwner {
-        require(feeRecipient_ != address(0), ZeroFeeRecipient());
-
-        uint256 feeToWithdraw_ = getCurrentProtocolFeeAmount();
-
-        require(feeToWithdraw_ > 0, ZeroFeeToWithdraw());
-
-        usdcToken.safeTransfer(feeRecipient_, feeToWithdraw_);
-
-        emit ProtocolFeeWithdrawn(feeToWithdraw_, feeRecipient_);
+    function setProtocolFeeSettings(ProtocolFeeSettings calldata feeSettings_) external onlyOwner {
+        _setProtocolFeeSettings(feeSettings_);
     }
 
     function createWishlist(
+        address wishlistOwner_,
         uint256 wishlistId_,
         uint256 sigDeadline_,
         uint256[] calldata initialItemPrices_,
@@ -98,26 +92,30 @@ contract WishlistFactory is
         require(!wishlistExists(wishlistId_), WishlistAlreadyExists(wishlistId_));
 
         bytes32 structHash_ = _getCreateWishlistStructHash(
-            msg.sender,
+            wishlistOwner_,
             wishlistId_,
             sigDeadline_,
             initialItemPrices_
         );
 
-        _checkCreateWishlistSig(msg.sender, structHash_, signature_);
+        _checkCreateWishlistSig(structHash_, signature_);
 
         newWishlistAddr_ = address(new PublicBeaconProxy(address(proxyBeacon), ""));
 
         IWishlist(newWishlistAddr_).initializeWishlist(
             wishlistId_,
-            msg.sender,
+            wishlistOwner_,
             initialItemPrices_
         );
 
         _wishlistIds.add(wishlistId_);
         _wishlists[wishlistId_] = newWishlistAddr_;
 
-        emit NewWishlistCreated(msg.sender, wishlistId_, newWishlistAddr_);
+        emit NewWishlistCreated(wishlistOwner_, wishlistId_, newWishlistAddr_);
+    }
+
+    function getProtocolFeeSettings() external view returns (ProtocolFeeSettings memory) {
+        return _feeSettings;
     }
 
     function getWishlistsTotalCount() external view returns (uint256) {
@@ -141,36 +139,45 @@ contract WishlistFactory is
         }
     }
 
-    function getCurrentProtocolFeeAmount() public view returns (uint256) {
-        return usdcToken.balanceOf(address(this));
-    }
-
     function wishlistExists(uint256 wishlistId_) public view returns (bool) {
         return _wishlistIds.contains(wishlistId_);
     }
 
-    function _setProtocolFeePercentage(uint256 newFeePercentage_) internal {
-        require(newFeePercentage_ <= PERCENTAGE_100, InvalidProtocolFee(newFeePercentage_));
+    function _setProtocolFeeSettings(ProtocolFeeSettings memory newProtocolFeeSettings_) internal {
+        require(
+            newProtocolFeeSettings_.protocolFeePercentage <= PERCENTAGE_100,
+            InvalidProtocolFee(newProtocolFeeSettings_.protocolFeePercentage)
+        );
+        require(
+            newProtocolFeeSettings_.protocolFeeRecipient != address(0),
+            ZeroAddr("ProtocolFeeRecipient")
+        );
 
-        uint256 currentFeePercentage_ = protocolFeePercentage;
+        _feeSettings = newProtocolFeeSettings_;
 
-        protocolFeePercentage = newFeePercentage_;
+        emit ProtocolFeeSettingsUpdated(
+            newProtocolFeeSettings_.protocolFeePercentage,
+            newProtocolFeeSettings_.maxProtocolFeeAmount,
+            newProtocolFeeSettings_.protocolFeeRecipient
+        );
+    }
 
-        emit ProtocolFeePercentageUpdated(newFeePercentage_, currentFeePercentage_);
+    function _setProtocolSignerAddr(address newProtocolSignerAddr_) internal {
+        require(newProtocolSignerAddr_ != address(0), ZeroAddr("ProtocolSigner"));
+
+        address currentProtocolSignerAddr_ = protocolSignerAddr;
+
+        protocolSignerAddr = newProtocolSignerAddr_;
+
+        emit ProtocolSignerUpdated(newProtocolSignerAddr_, currentProtocolSignerAddr_);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    function _checkCreateWishlistSig(
-        address wishlistOwner_,
-        bytes32 structHash_,
-        bytes memory signature_
-    ) internal view {
-        bytes32 typedHash_ = _hashTypedDataV4(structHash_);
+    function _checkCreateWishlistSig(bytes32 structHash_, bytes memory signature_) internal view {
+        address signer_ = ECDSA.recover(_hashTypedDataV4(structHash_), signature_);
 
-        address signer_ = ECDSA.recover(typedHash_, signature_);
-
-        require(signer_ == wishlistOwner_, InvalidCreateWishlistSignature());
+        require(signer_ == protocolSignerAddr, InvalidCreateWishlistSignature());
     }
 
     function _getCreateWishlistStructHash(

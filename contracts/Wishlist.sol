@@ -15,7 +15,7 @@ import {IWishlistFactory} from "./interfaces/IWishlistFactory.sol";
 
 contract Wishlist is IWishlist, Initializable {
     using SafeERC20 for IERC20;
-    using EnumerableSet for EnumerableSet.UintSet;
+    using EnumerableSet for *;
 
     IWishlistFactory public factory;
     IERC20 public usdcToken;
@@ -76,19 +76,35 @@ contract Wishlist is IWishlist, Initializable {
         emit WishlistFundsWithdrawn(amountToWithdraw_, fundsRecipient_);
     }
 
-    function buyWishlistItem(uint256 itemId_) external {
+    function contributeFunds(uint256 itemId_, uint256 amountToContribute_) external {
         _checkActiveItem(itemId_);
 
-        uint256 itemPrice_ = _itemsData[itemId_].itemPrice;
-        uint256 protocolFee_ = _countFeeAmount(itemPrice_);
+        WishlistItemData storage _itemData = _itemsData[itemId_];
 
-        usdcToken.safeTransferFrom(msg.sender, address(this), itemPrice_);
-        usdcToken.safeTransferFrom(msg.sender, address(factory), protocolFee_);
+        uint256 remainingAmount_ = _itemData.itemPrice - _itemData.collectedTokensAmount;
 
-        _activeItemIds.remove(itemId_);
-        _itemsData[itemId_].buyerAddr = msg.sender;
+        if (amountToContribute_ > remainingAmount_) {
+            amountToContribute_ = remainingAmount_;
+        }
 
-        emit ItemBought(itemId_, itemPrice_, protocolFee_, msg.sender);
+        uint256 protocolFee_ = _transferProtocolFee(amountToContribute_);
+
+        usdcToken.safeTransferFrom(msg.sender, address(this), amountToContribute_);
+
+        _itemData.collectedTokensAmount += amountToContribute_;
+
+        _itemData.contributrionsData[_itemData.totalContributionsNumber++] = ContributionData(
+            msg.sender,
+            amountToContribute_
+        );
+
+        emit FundsContributed(itemId_, amountToContribute_, protocolFee_, msg.sender);
+
+        if (amountToContribute_ == remainingAmount_) {
+            _activeItemIds.remove(itemId_);
+
+            emit FundsCollectionFinished(itemId_, _itemData.totalContributionsNumber);
+        }
     }
 
     function getWishlistInfo() external view returns (WishlistInfo memory) {
@@ -108,14 +124,31 @@ contract Wishlist is IWishlist, Initializable {
         resultArr_ = new WishlistItemInfo[](itemIds_.length);
 
         for (uint256 i = 0; i < itemIds_.length; i++) {
-            WishlistItemData memory itemData_ = _itemsData[itemIds_[i]];
+            WishlistItemData storage _itemData = _itemsData[itemIds_[i]];
 
             resultArr_[i] = WishlistItemInfo(
                 itemIds_[i],
-                itemData_.itemPrice,
-                _countFeeAmount(itemData_.itemPrice),
-                itemData_.buyerAddr,
-                itemData_.buyerAddr == address(0)
+                _itemData.itemPrice,
+                _itemData.collectedTokensAmount,
+                _itemData.totalContributionsNumber,
+                getContributionsInfo(itemIds_[i]),
+                isItemActive(itemIds_[i])
+            );
+        }
+    }
+
+    function getContributionsInfo(
+        uint256 itemId_
+    ) public view returns (ContributionInfo[] memory resultArr_) {
+        WishlistItemData storage _itemData = _itemsData[itemId_];
+
+        resultArr_ = new ContributionInfo[](_itemData.totalContributionsNumber);
+
+        for (uint256 i = 0; i < resultArr_.length; i++) {
+            resultArr_[i] = ContributionInfo(
+                i,
+                _itemData.contributrionsData[i].contributor,
+                _itemData.contributrionsData[i].contributionAmount
             );
         }
     }
@@ -170,10 +203,17 @@ contract Wishlist is IWishlist, Initializable {
         _itemData.itemPrice = newPrice_;
     }
 
-    function _countFeeAmount(uint256 itemPrice_) internal view returns (uint256) {
-        uint256 protocolFee_ = (itemPrice_ * factory.protocolFeePercentage()) / PERCENTAGE_100;
+    function _transferProtocolFee(
+        uint256 contributeAmount_
+    ) internal returns (uint256 protocolFee_) {
+        IWishlistFactory.ProtocolFeeSettings memory feeSettings_ = factory
+            .getProtocolFeeSettings();
 
-        return Math.min(protocolFee_, factory.maxProtocolFeeAmount());
+        protocolFee_ = (contributeAmount_ * feeSettings_.protocolFeePercentage) / PERCENTAGE_100;
+
+        Math.min(protocolFee_, feeSettings_.maxProtocolFeeAmount);
+
+        usdcToken.safeTransferFrom(msg.sender, feeSettings_.protocolFeeRecipient, protocolFee_);
     }
 
     function _onlyWishlistOwner() internal view {

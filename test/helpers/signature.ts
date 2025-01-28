@@ -7,7 +7,7 @@ export function getItemPricesHash(itemPrices: BigNumberish[]) {
 }
 
 export async function getCreateWishlistSignature(
-  sender: SignerWithAddress,
+  signer: SignerWithAddress,
   wishlistOwner: string,
   wishlistId: BigNumberish,
   itemPricesHash: string,
@@ -18,10 +18,10 @@ export async function getCreateWishlistSignature(
   const [name, version, chainId] = await Promise.all([
     permitConfig?.name ?? "WishlistFactory",
     permitConfig?.version ?? "1",
-    permitConfig?.chainId ?? (await sender.provider.getNetwork()).chainId,
+    permitConfig?.chainId ?? (await signer.provider.getNetwork()).chainId,
   ]);
 
-  const result = await sender.signTypedData(
+  const result = await signer.signTypedData(
     {
       name,
       version,
