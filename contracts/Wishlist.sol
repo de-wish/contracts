@@ -87,10 +87,9 @@ contract Wishlist is IWishlist, Initializable {
             amountToContribute_ = remainingAmount_;
         }
 
-        uint256 protocolFee_ = _countFeeAmount(amountToContribute_);
+        uint256 protocolFee_ = _transferProtocolFee(amountToContribute_);
 
         usdcToken.safeTransferFrom(msg.sender, address(this), amountToContribute_);
-        usdcToken.safeTransferFrom(msg.sender, address(factory), protocolFee_);
 
         _itemData.collectedTokensAmount += amountToContribute_;
 
@@ -204,10 +203,17 @@ contract Wishlist is IWishlist, Initializable {
         _itemData.itemPrice = newPrice_;
     }
 
-    function _countFeeAmount(uint256 itemPrice_) internal view returns (uint256) {
-        uint256 protocolFee_ = (itemPrice_ * factory.protocolFeePercentage()) / PERCENTAGE_100;
+    function _transferProtocolFee(
+        uint256 contributeAmount_
+    ) internal returns (uint256 protocolFee_) {
+        IWishlistFactory.ProtocolFeeSettings memory feeSettings_ = factory
+            .getProtocolFeeSettings();
 
-        return Math.min(protocolFee_, factory.maxProtocolFeeAmount());
+        protocolFee_ = (contributeAmount_ * feeSettings_.protocolFeePercentage) / PERCENTAGE_100;
+
+        Math.min(protocolFee_, feeSettings_.maxProtocolFeeAmount);
+
+        usdcToken.safeTransferFrom(msg.sender, feeSettings_.protocolFeeRecipient, protocolFee_);
     }
 
     function _onlyWishlistOwner() internal view {

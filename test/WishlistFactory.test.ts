@@ -8,7 +8,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { PRECISION, wei } from "@scripts";
 import { getCreateWishlistSignature, getItemPricesHash, Reverter } from "@test-helpers";
 
-import { WishlistFactory, Wishlist, ERC20Mock, IWishlist } from "@ethers-v6";
+import { WishlistFactory, Wishlist, ERC20Mock, IWishlist, ProtocolTreasury } from "@ethers-v6";
 
 describe("WishlistFactory", () => {
   const reverter = new Reverter();
@@ -21,13 +21,13 @@ describe("WishlistFactory", () => {
   let FIRST: SignerWithAddress;
   let SECOND: SignerWithAddress;
   let PROTOCOL_SIGNER: SignerWithAddress;
-  let FEE_RECIPIENT: SignerWithAddress;
 
   let usdcToken: ERC20Mock;
 
   let wishlistImpl: Wishlist;
   let wishlistFactoryImpl: WishlistFactory;
 
+  let protocolTreasury: ProtocolTreasury;
   let wishlistFactory: WishlistFactory;
 
   function checkItemInfo(
@@ -53,9 +53,10 @@ describe("WishlistFactory", () => {
   }
 
   before(async () => {
-    [OWNER, FIRST, SECOND, PROTOCOL_SIGNER, FEE_RECIPIENT] = await ethers.getSigners();
+    [OWNER, FIRST, SECOND, PROTOCOL_SIGNER] = await ethers.getSigners();
 
     const ERC1967ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+    const ProtocolTreasuryFactory = await ethers.getContractFactory("ProtocolTreasury");
     const WishlistFactoryFactory = await ethers.getContractFactory("WishlistFactory");
     const WishlistFactory = await ethers.getContractFactory("Wishlist");
     const ERC20MockFactory = await ethers.getContractFactory("ERC20Mock");
@@ -65,20 +66,23 @@ describe("WishlistFactory", () => {
     await usdcToken.mint(OWNER, initialTokensAmount);
     await usdcToken.mint(FIRST, initialTokensAmount);
 
+    const protocolTreasuryImpl = await ProtocolTreasuryFactory.deploy();
+
     wishlistFactoryImpl = await WishlistFactoryFactory.deploy();
     wishlistImpl = await WishlistFactory.deploy();
 
+    const protocolTreasuryProxy = await ERC1967ProxyFactory.deploy(protocolTreasuryImpl, "0x");
     const wishlistFactoryProxy = await ERC1967ProxyFactory.deploy(wishlistFactoryImpl, "0x");
 
+    protocolTreasury = await ethers.getContractAt("ProtocolTreasury", protocolTreasuryProxy);
     wishlistFactory = await ethers.getContractAt("WishlistFactory", wishlistFactoryProxy);
 
-    await wishlistFactory.initialize(
-      wishlistImpl,
-      usdcToken,
-      PROTOCOL_SIGNER,
-      defaultProtocolFeePercentage,
-      maxProtocolFeeAmount,
-    );
+    await protocolTreasury.initialize();
+    await wishlistFactory.initialize(wishlistImpl, usdcToken, PROTOCOL_SIGNER, {
+      protocolFeePercentage: defaultProtocolFeePercentage,
+      maxProtocolFeeAmount: maxProtocolFeeAmount,
+      protocolFeeRecipient: protocolTreasury,
+    });
 
     await reverter.snapshot();
   });
@@ -89,8 +93,11 @@ describe("WishlistFactory", () => {
     it("should set parameters correctly", async () => {
       expect(await wishlistFactory.owner()).to.eq(OWNER);
       expect(await wishlistFactory.usdcToken()).to.eq(usdcToken);
-      expect(await wishlistFactory.protocolFeePercentage()).to.eq(defaultProtocolFeePercentage);
-      expect(await wishlistFactory.maxProtocolFeeAmount()).to.eq(maxProtocolFeeAmount);
+      expect(await wishlistFactory.getProtocolFeeSettings()).to.deep.eq([
+        defaultProtocolFeePercentage,
+        maxProtocolFeeAmount,
+        await protocolTreasury.getAddress(),
+      ]);
 
       const proxyBeacon = await ethers.getContractAt("ProxyBeacon", await wishlistFactory.proxyBeacon());
 
@@ -99,13 +106,11 @@ describe("WishlistFactory", () => {
 
     it("should get exception if try to call init function twice", async () => {
       await expect(
-        wishlistFactory.initialize(
-          wishlistImpl,
-          usdcToken,
-          PROTOCOL_SIGNER,
-          defaultProtocolFeePercentage,
-          maxProtocolFeeAmount,
-        ),
+        wishlistFactory.initialize(wishlistImpl, usdcToken, PROTOCOL_SIGNER, {
+          protocolFeePercentage: defaultProtocolFeePercentage,
+          maxProtocolFeeAmount: maxProtocolFeeAmount,
+          protocolFeeRecipient: protocolTreasury,
+        }),
       ).to.be.revertedWith("Initializable: contract is already initialized");
     });
   });
@@ -174,54 +179,6 @@ describe("WishlistFactory", () => {
     });
   });
 
-  describe("setProtocolFeePercentage", () => {
-    it("should correctly set new protocol fee value", async () => {
-      const newProtocolFee = 3n * PRECISION;
-
-      const tx = await wishlistFactory.setProtocolFeePercentage(newProtocolFee);
-
-      expect(tx).to.emit(wishlistFactory, "ProtocolFeeUpdated").withArgs(newProtocolFee, defaultProtocolFeePercentage);
-
-      expect(await wishlistFactory.protocolFeePercentage()).to.be.eq(newProtocolFee);
-    });
-
-    it("should get exception if try to set protocol fee higher than the max value", async () => {
-      const newProtocolFee = 110n * PRECISION;
-
-      await expect(wishlistFactory.setProtocolFeePercentage(newProtocolFee))
-        .to.revertedWithCustomError(wishlistFactory, "InvalidProtocolFee")
-        .withArgs(newProtocolFee);
-    });
-
-    it("should get exception if non-owner try to set protocol fee", async () => {
-      const newProtocolFee = 3n * PRECISION;
-
-      await expect(wishlistFactory.connect(FIRST).setProtocolFeePercentage(newProtocolFee)).to.revertedWith(
-        "Ownable: caller is not the owner",
-      );
-    });
-  });
-
-  describe("setMaxProtocolFeeAmount", () => {
-    it("should correctly set max protocol fee amount", async () => {
-      const newMaxProtocolFeeAmount = wei(10, 6);
-
-      const tx = await wishlistFactory.setMaxProtocolFeeAmount(newMaxProtocolFeeAmount);
-
-      expect(tx)
-        .to.emit(wishlistFactory, "MaxProtocolFeeAmountUpdated")
-        .withArgs(newMaxProtocolFeeAmount, maxProtocolFeeAmount);
-
-      expect(await wishlistFactory.maxProtocolFeeAmount()).to.be.eq(newMaxProtocolFeeAmount);
-    });
-
-    it("should get exception if non-owner try to set max protocol fee amount", async () => {
-      await expect(wishlistFactory.connect(FIRST).setMaxProtocolFeeAmount(wei(100, 6))).to.revertedWith(
-        "Ownable: caller is not the owner",
-      );
-    });
-  });
-
   describe("setProtocolSignerAddr", () => {
     it("should correctly set protocol signer address", async () => {
       const tx = await wishlistFactory.setProtocolSignerAddr(FIRST);
@@ -241,6 +198,62 @@ describe("WishlistFactory", () => {
       await expect(wishlistFactory.connect(FIRST).setProtocolSignerAddr(FIRST)).to.revertedWith(
         "Ownable: caller is not the owner",
       );
+    });
+  });
+
+  describe("setProtocolFeeSettings", () => {
+    it("should correctly set protocol fee settings", async () => {
+      const newProtocolFee = 3n * PRECISION;
+
+      const tx = await wishlistFactory.setProtocolFeeSettings({
+        protocolFeePercentage: newProtocolFee,
+        maxProtocolFeeAmount: maxProtocolFeeAmount,
+        protocolFeeRecipient: FIRST,
+      });
+
+      expect(tx)
+        .to.emit(wishlistFactory, "ProtocolFeeSettingsUpdated")
+        .withArgs(newProtocolFee, maxProtocolFeeAmount, FIRST);
+    });
+
+    it("should get exception if try to set protocol fee higher than the max value", async () => {
+      const newProtocolFee = 110n * PRECISION;
+
+      await expect(
+        wishlistFactory.setProtocolFeeSettings({
+          protocolFeePercentage: newProtocolFee,
+          maxProtocolFeeAmount: maxProtocolFeeAmount,
+          protocolFeeRecipient: FIRST,
+        }),
+      )
+        .to.revertedWithCustomError(wishlistFactory, "InvalidProtocolFee")
+        .withArgs(newProtocolFee);
+    });
+
+    it("should get exception if try to set zero address as a protocol fee recipient", async () => {
+      const newProtocolFee = 3n * PRECISION;
+
+      await expect(
+        wishlistFactory.setProtocolFeeSettings({
+          protocolFeePercentage: newProtocolFee,
+          maxProtocolFeeAmount: maxProtocolFeeAmount,
+          protocolFeeRecipient: ethers.ZeroAddress,
+        }),
+      )
+        .to.revertedWithCustomError(wishlistFactory, "ZeroAddr")
+        .withArgs("ProtocolFeeRecipient");
+    });
+
+    it("should get exception if non-owner try to set protocol fee settings", async () => {
+      const newProtocolFee = 3n * PRECISION;
+
+      await expect(
+        wishlistFactory.connect(FIRST).setProtocolFeeSettings({
+          protocolFeePercentage: newProtocolFee,
+          maxProtocolFeeAmount: maxProtocolFeeAmount,
+          protocolFeeRecipient: FIRST,
+        }),
+      ).to.revertedWith("Ownable: caller is not the owner");
     });
   });
 
@@ -349,42 +362,42 @@ describe("WishlistFactory", () => {
     });
   });
 
-  describe("withdrawProtocolFee", () => {
-    const feeAmount = wei(100, 6);
+  // describe("withdrawProtocolFee", () => {
+  //   const feeAmount = wei(100, 6);
 
-    beforeEach("setup", async () => {
-      await usdcToken.transfer(wishlistFactory, feeAmount);
-    });
+  //   beforeEach("setup", async () => {
+  //     await usdcToken.transfer(wishlistFactory, feeAmount);
+  //   });
 
-    it("should correctly withdraw protocol fee from the contract", async () => {
-      const tx = await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
+  //   it("should correctly withdraw protocol fee from the contract", async () => {
+  //     const tx = await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
 
-      expect(tx).to.emit(wishlistFactory, "ProtocolFeeWithdrawn").withArgs(feeAmount, FEE_RECIPIENT);
-      expect(await usdcToken.balanceOf(FEE_RECIPIENT)).to.be.eq(feeAmount);
+  //     expect(tx).to.emit(wishlistFactory, "ProtocolFeeWithdrawn").withArgs(feeAmount, FEE_RECIPIENT);
+  //     expect(await usdcToken.balanceOf(FEE_RECIPIENT)).to.be.eq(feeAmount);
 
-      expect(await usdcToken.balanceOf(wishlistFactory)).to.be.eq(0);
-    });
+  //     expect(await usdcToken.balanceOf(wishlistFactory)).to.be.eq(0);
+  //   });
 
-    it("should get exception if pass zero recipient address", async () => {
-      await expect(wishlistFactory.withdrawProtocolFee(ethers.ZeroAddress))
-        .to.revertedWithCustomError(wishlistFactory, "ZeroAddr")
-        .withArgs("FeeRecipient");
-    });
+  //   it("should get exception if pass zero recipient address", async () => {
+  //     await expect(wishlistFactory.withdrawProtocolFee(ethers.ZeroAddress))
+  //       .to.revertedWithCustomError(wishlistFactory, "ZeroAddr")
+  //       .withArgs("FeeRecipient");
+  //   });
 
-    it("should get exception if nothing to withdraw", async () => {
-      await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
+  //   it("should get exception if nothing to withdraw", async () => {
+  //     await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
 
-      await expect(wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT))
-        .to.revertedWithCustomError(wishlistFactory, "ZeroFeeToWithdraw")
-        .withArgs();
-    });
+  //     await expect(wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT))
+  //       .to.revertedWithCustomError(wishlistFactory, "ZeroFeeToWithdraw")
+  //       .withArgs();
+  //   });
 
-    it("should get exception if non-owner try to withdraw protocol fee", async () => {
-      await expect(wishlistFactory.connect(FIRST).withdrawProtocolFee(FIRST)).to.revertedWith(
-        "Ownable: caller is not the owner",
-      );
-    });
-  });
+  //   it("should get exception if non-owner try to withdraw protocol fee", async () => {
+  //     await expect(wishlistFactory.connect(FIRST).withdrawProtocolFee(FIRST)).to.revertedWith(
+  //       "Ownable: caller is not the owner",
+  //     );
+  //   });
+  // });
 
   describe("getWishlistAddresses", () => {
     it("should return correct wishlist addresses", async () => {

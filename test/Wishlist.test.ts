@@ -8,7 +8,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { PERCENTAGE_100, PRECISION, wei } from "@scripts";
 import { getCreateWishlistSignature, getItemPricesHash, Reverter } from "@test-helpers";
 
-import { WishlistFactory, Wishlist, ERC20Mock, IWishlist } from "@ethers-v6";
+import { WishlistFactory, Wishlist, ERC20Mock, IWishlist, ProtocolTreasury } from "@ethers-v6";
 
 describe("Wishlist", () => {
   const reverter = new Reverter();
@@ -31,6 +31,7 @@ describe("Wishlist", () => {
   let wishlistImpl: Wishlist;
   let wishlistFactoryImpl: WishlistFactory;
 
+  let protocolTreasury: ProtocolTreasury;
   let wishlistFactory: WishlistFactory;
   let wishlist: Wishlist;
 
@@ -68,6 +69,7 @@ describe("Wishlist", () => {
     [OWNER, FIRST, SECOND, PROTOCOL_SIGNER, FEE_RECIPIENT] = await ethers.getSigners();
 
     const ERC1967ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+    const ProtocolTreasuryFactory = await ethers.getContractFactory("ProtocolTreasury");
     const WishlistFactoryFactory = await ethers.getContractFactory("WishlistFactory");
     const WishlistFactory = await ethers.getContractFactory("Wishlist");
     const ERC20MockFactory = await ethers.getContractFactory("ERC20Mock");
@@ -77,20 +79,23 @@ describe("Wishlist", () => {
     await usdcToken.mint(OWNER, initialTokensAmount);
     await usdcToken.mint(FIRST, initialTokensAmount);
 
+    const protocolTreasuryImpl = await ProtocolTreasuryFactory.deploy();
+
     wishlistFactoryImpl = await WishlistFactoryFactory.deploy();
     wishlistImpl = await WishlistFactory.deploy();
 
+    const protocolTreasuryProxy = await ERC1967ProxyFactory.deploy(protocolTreasuryImpl, "0x");
     const wishlistFactoryProxy = await ERC1967ProxyFactory.deploy(wishlistFactoryImpl, "0x");
 
+    protocolTreasury = await ethers.getContractAt("ProtocolTreasury", protocolTreasuryProxy);
     wishlistFactory = await ethers.getContractAt("WishlistFactory", wishlistFactoryProxy);
 
-    await wishlistFactory.initialize(
-      wishlistImpl,
-      usdcToken,
-      PROTOCOL_SIGNER,
-      defaultProtocolFeePercentage,
-      maxProtocolFeeAmount,
-    );
+    await protocolTreasury.initialize();
+    await wishlistFactory.initialize(wishlistImpl, usdcToken, PROTOCOL_SIGNER, {
+      protocolFeePercentage: defaultProtocolFeePercentage,
+      maxProtocolFeeAmount: maxProtocolFeeAmount,
+      protocolFeeRecipient: protocolTreasury,
+    });
 
     sigDeadline = (await time.latest()) + 1000;
 
@@ -116,17 +121,6 @@ describe("Wishlist", () => {
   afterEach(reverter.revert);
 
   describe("initialize", () => {
-    it("should set parameters correctly", async () => {
-      expect(await wishlistFactory.owner()).to.eq(OWNER);
-      expect(await wishlistFactory.usdcToken()).to.eq(usdcToken);
-      expect(await wishlistFactory.protocolFeePercentage()).to.eq(defaultProtocolFeePercentage);
-      expect(await wishlistFactory.maxProtocolFeeAmount()).to.eq(maxProtocolFeeAmount);
-
-      const proxyBeacon = await ethers.getContractAt("ProxyBeacon", await wishlistFactory.proxyBeacon());
-
-      expect(await proxyBeacon.implementation()).to.be.eq(wishlistImpl);
-    });
-
     it("should correctly init wishlist with initial items", async () => {
       const newWishlistId = 321;
       const itemPrices = [wei(100, 6), wei(50, 6)];
@@ -341,7 +335,7 @@ describe("Wishlist", () => {
       const info = await wishlist.getWishlistInfo();
 
       expect(info.owedUsdcAmount).to.be.eq(itemPrices[itemToContribute]);
-      expect(await usdcToken.balanceOf(wishlistFactory)).to.be.eq(expectedFeeAmount);
+      expect(await usdcToken.balanceOf(protocolTreasury)).to.be.eq(expectedFeeAmount);
 
       expect(await usdcToken.balanceOf(OWNER)).to.be.eq(
         initialTokensAmount - itemPrices[itemToContribute] - expectedFeeAmount,
