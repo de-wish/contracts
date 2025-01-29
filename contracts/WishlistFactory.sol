@@ -39,8 +39,6 @@ contract WishlistFactory is
 
     ProxyBeacon public proxyBeacon;
 
-    uint256 public nextWishlistId;
-
     address public protocolSignerAddr;
 
     ProtocolFeeSettings internal _feeSettings;
@@ -65,8 +63,6 @@ contract WishlistFactory is
 
         _setProtocolSignerAddr(protocolSignerAddr_);
         _setProtocolFeeSettings(feeSettings_);
-
-        nextWishlistId = 1;
     }
 
     function upgradeWishlistsImpl(address newWishlistsImpl_) external onlyOwner {

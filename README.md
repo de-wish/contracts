@@ -1,5 +1,9 @@
 # De-Wish Contracts
 
+## Overview
+
+This repository contains smart contracts for managing user wishlists, handling contributions, and managing protocol fees. The key contracts include `Wishlist` and `WishlistFactory`.
+
 ### Compilation
 
 To compile the contracts, use the next script:

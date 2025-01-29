@@ -362,43 +362,6 @@ describe("WishlistFactory", () => {
     });
   });
 
-  // describe("withdrawProtocolFee", () => {
-  //   const feeAmount = wei(100, 6);
-
-  //   beforeEach("setup", async () => {
-  //     await usdcToken.transfer(wishlistFactory, feeAmount);
-  //   });
-
-  //   it("should correctly withdraw protocol fee from the contract", async () => {
-  //     const tx = await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
-
-  //     expect(tx).to.emit(wishlistFactory, "ProtocolFeeWithdrawn").withArgs(feeAmount, FEE_RECIPIENT);
-  //     expect(await usdcToken.balanceOf(FEE_RECIPIENT)).to.be.eq(feeAmount);
-
-  //     expect(await usdcToken.balanceOf(wishlistFactory)).to.be.eq(0);
-  //   });
-
-  //   it("should get exception if pass zero recipient address", async () => {
-  //     await expect(wishlistFactory.withdrawProtocolFee(ethers.ZeroAddress))
-  //       .to.revertedWithCustomError(wishlistFactory, "ZeroAddr")
-  //       .withArgs("FeeRecipient");
-  //   });
-
-  //   it("should get exception if nothing to withdraw", async () => {
-  //     await wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT);
-
-  //     await expect(wishlistFactory.withdrawProtocolFee(FEE_RECIPIENT))
-  //       .to.revertedWithCustomError(wishlistFactory, "ZeroFeeToWithdraw")
-  //       .withArgs();
-  //   });
-
-  //   it("should get exception if non-owner try to withdraw protocol fee", async () => {
-  //     await expect(wishlistFactory.connect(FIRST).withdrawProtocolFee(FIRST)).to.revertedWith(
-  //       "Ownable: caller is not the owner",
-  //     );
-  //   });
-  // });
-
   describe("getWishlistAddresses", () => {
     it("should return correct wishlist addresses", async () => {
       const wishlistIds = [123, 124, 125];
