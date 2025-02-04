@@ -87,14 +87,14 @@ contract WishlistFactory is
         require(block.timestamp <= sigDeadline_, CreateWishlistSignatureExpired());
         require(!wishlistExists(wishlistId_), WishlistAlreadyExists(wishlistId_));
 
-        bytes32 structHash_ = _getCreateWishlistStructHash(
+        bytes32 createWishlistSigHash_ = getCreateWishlistSigHash(
             wishlistOwner_,
             wishlistId_,
             sigDeadline_,
             initialItemPrices_
         );
 
-        _checkCreateWishlistSig(structHash_, signature_);
+        _checkCreateWishlistSig(createWishlistSigHash_, signature_);
 
         newWishlistAddr_ = address(new PublicBeaconProxy(address(proxyBeacon), ""));
 
@@ -139,6 +139,22 @@ contract WishlistFactory is
         return _wishlistIds.contains(wishlistId_);
     }
 
+    function getCreateWishlistSigHash(
+        address wishlistOwner_,
+        uint256 wishlistId_,
+        uint256 sigDeadline_,
+        uint256[] calldata initialItemPrices_
+    ) public view returns (bytes32) {
+        bytes32 structHash_ = _getCreateWishlistStructHash(
+            wishlistOwner_,
+            wishlistId_,
+            sigDeadline_,
+            initialItemPrices_
+        );
+
+        return _hashTypedDataV4(structHash_);
+    }
+
     function _setProtocolFeeSettings(ProtocolFeeSettings memory newProtocolFeeSettings_) internal {
         require(
             newProtocolFeeSettings_.protocolFeePercentage <= PERCENTAGE_100,
@@ -170,8 +186,8 @@ contract WishlistFactory is
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    function _checkCreateWishlistSig(bytes32 structHash_, bytes memory signature_) internal view {
-        address signer_ = ECDSA.recover(_hashTypedDataV4(structHash_), signature_);
+    function _checkCreateWishlistSig(bytes32 sigHash_, bytes memory signature_) internal view {
+        address signer_ = ECDSA.recover(sigHash_, signature_);
 
         require(signer_ == protocolSignerAddr, InvalidCreateWishlistSignature());
     }

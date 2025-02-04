@@ -162,4 +162,19 @@ interface IWishlistFactory {
      * @return True if the wishlist exists, false otherwise.
      */
     function wishlistExists(uint256 wishlistId_) external view returns (bool);
+
+    /**
+     * @notice Computes the EIP712 signature hash for creating a wishlist.
+     * @param wishlistOwner_ The address of the wishlist owner.
+     * @param wishlistId_ The unique identifier of the wishlist.
+     * @param sigDeadline_ The timestamp until which the signature is valid.
+     * @param initialItemPrices_ The initial prices of items in the wishlist.
+     * @return The computed EIP712 signature hash.
+     */
+    function getCreateWishlistSigHash(
+        address wishlistOwner_,
+        uint256 wishlistId_,
+        uint256 sigDeadline_,
+        uint256[] calldata initialItemPrices_
+    ) external view returns (bytes32);
 }
