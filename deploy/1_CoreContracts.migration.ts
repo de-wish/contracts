@@ -22,25 +22,39 @@ export = async (deployer: Deployer) => {
     usdcTokenAddr = await usdcToken.getAddress();
   }
 
-  const protocolTreasuryImpl = await deployer.deploy(ProtocolTreasury__factory);
+  let contractsInfo: [string, string][] = [];
+
   const wishlistFactoryImpl = await deployer.deploy(WishlistFactory__factory);
   const wishlistImpl = await deployer.deploy(Wishlist__factory);
 
-  const protocolTreasuryProxy = await deployer.deploy(
-    ERC1967Proxy__factory,
-    [await protocolTreasuryImpl.getAddress(), "0x"],
-    { name: "ProtocolTreasuryProxy" },
-  );
   const wishlistFactoryProxy = await deployer.deploy(
     ERC1967Proxy__factory,
     [await wishlistFactoryImpl.getAddress(), "0x"],
     { name: "WishlistFactoryProxy" },
   );
 
-  const protocolTreasury = await deployer.deployed(ProtocolTreasury__factory, await protocolTreasuryProxy.getAddress());
   const wishlistFactory = await deployer.deployed(WishlistFactory__factory, await wishlistFactoryProxy.getAddress());
 
-  await protocolTreasury.initialize();
+  if (!config.protocolFeeSettings.protocolFeeRecipient) {
+    const protocolTreasuryImpl = await deployer.deploy(ProtocolTreasury__factory);
+    const protocolTreasuryProxy = await deployer.deploy(
+      ERC1967Proxy__factory,
+      [await protocolTreasuryImpl.getAddress(), "0x"],
+      { name: "ProtocolTreasuryProxy" },
+    );
+
+    const protocolTreasury = await deployer.deployed(
+      ProtocolTreasury__factory,
+      await protocolTreasuryProxy.getAddress(),
+    );
+
+    await protocolTreasury.initialize();
+
+    config.protocolFeeSettings.protocolFeeRecipient = await protocolTreasury.getAddress();
+
+    contractsInfo.push(["ProtocolTreasury", await protocolTreasury.getAddress()]);
+  }
+
   await wishlistFactory.initialize(
     await wishlistImpl.getAddress(),
     usdcTokenAddr,
@@ -48,10 +62,11 @@ export = async (deployer: Deployer) => {
     config.protocolFeeSettings,
   );
 
-  Reporter.reportContracts(
+  contractsInfo.push(
     ["USDC", usdcTokenAddr],
-    ["ProtocolTreasury", await protocolTreasury.getAddress()],
     ["WishlistFactory", await wishlistFactory.getAddress()],
     ["WishlistImpl", await wishlistImpl.getAddress()],
   );
+
+  Reporter.reportContracts(...contractsInfo);
 };

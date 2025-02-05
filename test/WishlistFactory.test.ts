@@ -398,4 +398,26 @@ describe("WishlistFactory", () => {
       }
     });
   });
+
+  describe("getCreateWishlistSigHash", () => {
+    it("should return correct create wishlist sig hash", async () => {
+      const wishlistId = 123;
+      const itemPrices = [wei(100, 6), wei(120, 6)];
+
+      const sigDeadline = (await time.latest()) + 1000;
+
+      const signature = await getCreateWishlistSignature(
+        PROTOCOL_SIGNER,
+        await FIRST.getAddress(),
+        wishlistId,
+        getItemPricesHash(itemPrices),
+        sigDeadline,
+        await wishlistFactory.getAddress(),
+      );
+
+      const sigHash = await wishlistFactory.getCreateWishlistSigHash(FIRST, wishlistId, sigDeadline, itemPrices);
+
+      expect(ethers.recoverAddress(sigHash, signature)).to.be.eq(PROTOCOL_SIGNER);
+    });
+  });
 });
