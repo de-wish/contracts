@@ -108,12 +108,14 @@ interface IWishlist {
     /**
      * @notice Emitted when funds are contributed to a wishlist item.
      * @param itemId Unique identifier of the item.
+     * @param currentContributionId ID of the contribution.
      * @param contributedAmount Amount contributed.
      * @param feeAmount Protocol fee amount.
      * @param contributionAddr Address of the contributor.
      */
     event FundsContributed(
         uint256 indexed itemId,
+        uint256 currentContributionId,
         uint256 contributedAmount,
         uint256 feeAmount,
         address contributionAddr
