@@ -93,12 +93,20 @@ contract Wishlist is IWishlist, Initializable {
 
         _itemData.collectedTokensAmount += amountToContribute_;
 
-        _itemData.contributrionsData[_itemData.totalContributionsNumber++] = ContributionData(
+        uint256 currentContributionId_ = _itemData.totalContributionsNumber++;
+
+        _itemData.contributrionsData[currentContributionId_] = ContributionData(
             msg.sender,
             amountToContribute_
         );
 
-        emit FundsContributed(itemId_, amountToContribute_, protocolFee_, msg.sender);
+        emit FundsContributed(
+            itemId_,
+            currentContributionId_,
+            amountToContribute_,
+            protocolFee_,
+            msg.sender
+        );
 
         if (amountToContribute_ == remainingAmount_) {
             _activeItemIds.remove(itemId_);

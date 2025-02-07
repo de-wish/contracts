@@ -321,13 +321,14 @@ describe("Wishlist", () => {
     it("should correctly contribute full price to the wishlist item", async () => {
       const itemToContribute = 1;
 
+      const expectedContributionId = 0;
       const expectedFeeAmount = countFee(itemPrices[itemToContribute]);
 
       const tx = await wishlist.contributeFunds(itemToContribute, itemPrices[itemToContribute]);
 
       await expect(tx)
         .to.emit(wishlist, "FundsContributed")
-        .withArgs(itemToContribute, itemPrices[itemToContribute], expectedFeeAmount, OWNER);
+        .withArgs(itemToContribute, expectedContributionId, itemPrices[itemToContribute], expectedFeeAmount, OWNER);
       await expect(tx).to.emit(wishlist, "FundsCollectionFinished").withArgs(itemToContribute, 1);
 
       expect(await wishlist.isItemActive(itemToContribute)).to.be.false;
@@ -357,7 +358,7 @@ describe("Wishlist", () => {
 
       await expect(tx)
         .to.emit(wishlist, "FundsContributed")
-        .withArgs(itemToContribute, amount1ToContribute, expectedFeeAmount1, OWNER);
+        .withArgs(itemToContribute, 0, amount1ToContribute, expectedFeeAmount1, OWNER);
       await expect(tx).to.not.emit(wishlist, "FundsCollectionFinished");
 
       expect(await wishlist.isItemActive(itemToContribute)).to.be.true;
@@ -370,7 +371,7 @@ describe("Wishlist", () => {
 
       await expect(tx)
         .to.emit(wishlist, "FundsContributed")
-        .withArgs(itemToContribute, expectedAmount2ToContribute, expectedFeeAmount2, FIRST);
+        .withArgs(itemToContribute, 1, expectedAmount2ToContribute, expectedFeeAmount2, FIRST);
       await expect(tx).to.emit(wishlist, "FundsCollectionFinished").withArgs(itemToContribute, 2);
 
       expect(await wishlist.isItemActive(itemToContribute)).to.be.false;
